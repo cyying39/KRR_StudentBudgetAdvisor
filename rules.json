@@ -1,0 +1,50 @@
+[
+  {
+    "rule": "low_savings",
+    "condition": "saving_percent < 10",
+    "action": "warn_user('Your savings are below 10%')",
+    "description": "Warn if savings are too low"
+  },
+  {
+    "rule": "pay_debt",
+    "condition": "debt_percent > 20",
+    "action": "warn_user('More than 20% of your income goes to debt repayment')",
+    "description": "Warn if debt repayment too high"
+  },
+  {
+    "rule": "encourage_investment",
+    "condition": "savings_percent > 20",
+    "action": "suggest_action('Consider investment as part of your savings')",
+    "description": "Encourage investment if savings are high enough"
+  },
+  {
+    "rule": "recommend_track_expenses",
+    "condition": "expenses_tracking == false",
+    "action": "recommend_action('Track daily expenses to manage budget better')",
+    "description": "Recommend to track daily expenses if no tracking habits"
+  },
+  {
+    "rule": "recommend_reduce_subscriptions",
+    "condition": "subscription_percent > 10",
+    "action": "recommend_action('Reduce unnecessary subscriptions')",
+    "description": "Recommend reducing subscriptions if they exceed 10% of income"
+  },
+  {
+    "rule": "low_emergency_fund",
+    "condition": "emergency_fund < 500",
+    "action": "recommend_action('Build an emergency fund for unexpected expenses.')",
+    "description": "Suggest creating an emergency fund if below RM500."
+  },
+  {
+    "rule": "low_savings_for_goal",
+    "condition": "goal_exists == true AND savings < goal_amount * 0.5",
+    "action": "recommend_action('Create a monthly savings plan to reach your goal.')",
+    "description": "Recommend a savings plan if the user has a goal but insufficient savings."
+  },
+  {
+    "rule": "high_wants_spending",
+    "condition": "wants_percent > 30",
+    "action": "warn_user('Too much spending on non-essentials. Consider adjusting your budget.')",
+    "description": "Warn if spending on wants exceeds 30%."
+  }
+]
