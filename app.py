@@ -1,6 +1,98 @@
 import streamlit as st
 from experta import *
 from typing import List
+import hashlib
+import mysql.connector
+
+def get_connection():
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",          # replace if different
+        password="",  # change to your actual MySQL root password
+        database="budget_app"
+    )
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def check_credentials(username, password):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, password FROM users WHERE username = %s", (username,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if result:
+        user_id, stored_hash = result
+        if stored_hash == hash_password(password):
+            return user_id
+    return None
+
+def create_user(username, password):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", 
+                       (username, hash_password(password)))
+        conn.commit()
+        return True
+    except mysql.connector.errors.IntegrityError:
+        return False  # Username already exists
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def insert_advice_to_db(user_id, data_dict, advice_text):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    query = """
+        INSERT INTO advice_log (
+            user_id, savings_percent, debt_percent, subscription_percent, expenses_tracking,
+            emergency_fund, wants_percent, goal_exists, savings, goal_amount, advice_text
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+
+    values = (
+        user_id,
+        data_dict['savings_percent'],
+        data_dict['debt_percent'],
+        data_dict['subscription_percent'],
+        data_dict['expenses_tracking'],
+        data_dict['emergency_fund'],
+        data_dict['wants_percent'],
+        data_dict['goal_exists'],
+        data_dict['savings'],
+        data_dict['goal_amount'],
+        advice_text
+    )
+
+    cursor.execute(query, values)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_user_advice_history(user_id):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT created_at, savings_percent, debt_percent, wants_percent, advice_text
+        FROM advice_log
+        WHERE user_id = %s
+        ORDER BY created_at DESC
+        LIMIT 10
+    """, (user_id,))
+
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return results
+
+
 
 # Define Fact and Engine
 class UserData(Fact):
@@ -46,8 +138,49 @@ class BudgetAdvisor(KnowledgeEngine):
     def high_wants_spending(self):
         self._add_advice("⚠️ Too much spending on non-essentials.")
 
+    
+
+
+if 'user_id' not in st.session_state:
+    st.header("🔐 Login")
+    login_username = st.text_input("Username")
+    login_password = st.text_input("Password", type="password")
+    login_button = st.button("Login")
+
+    if login_button:
+        user_id = check_credentials(login_username, login_password)
+        if user_id:
+            st.session_state.user_id = user_id
+            st.success("✅ Logged in successfully!")
+            st.rerun()
+        else:
+            st.error("❌ Invalid username or password.")
+
+    st.markdown("---")
+
+    with st.expander("🆕 Don't have an account? **Sign up here**"):
+        signup_username = st.text_input("New Username")
+        signup_password = st.text_input("New Password", type="password")
+        signup_button = st.button("Create Account")
+
+        if signup_button:
+            if signup_username and signup_password:
+                success = create_user(signup_username, signup_password)
+                if success:
+                    st.success("🎉 Account created! You can now log in.")
+                else:
+                    st.error("🚫 Username already exists. Try another.")
+            else:
+                st.warning("Please enter both username and password.")
+
+    st.stop()
+
+
+
 # Streamlit Interface
 st.title("💰 Student Budget Advisor")
+st.sidebar.button("🚪 Logout", on_click=lambda: st.session_state.clear())
+
 
 with st.form("budget_form"):
     savings_percent = st.slider("Savings (% of income)", 0, 100, 10)
@@ -65,23 +198,52 @@ with st.form("budget_form"):
 if submitted:
     engine = BudgetAdvisor()
     engine.reset()
-    engine.declare(UserData(
-        savings_percent=savings_percent,
-        debt_percent=debt_percent,
-        subscription_percent=subscription_percent,
-        expenses_tracking=expenses_tracking,
-        emergency_fund=emergency_fund,
-        wants_percent=wants_percent,
-        goal_exists=goal_exists,
-        savings=savings,
-        goal_amount=goal_amount
-    ))
+    
+    # Declare user input facts
+    user_facts = {
+        'savings_percent': savings_percent,
+        'debt_percent': debt_percent,
+        'subscription_percent': subscription_percent,
+        'expenses_tracking': expenses_tracking,
+        'emergency_fund': emergency_fund,
+        'wants_percent': wants_percent,
+        'goal_exists': goal_exists,
+        'savings': savings,
+        'goal_amount': goal_amount
+    }
+
+    engine.declare(UserData(**user_facts))
     engine.run()
 
+    # Display advice
     st.subheader("📋 Budgeting Advice")
     if engine.advice_list:
         for advice in engine.advice_list:
             st.write(advice)
+        # Save to DB
+        insert_advice_to_db(
+            user_id=st.session_state.user_id,
+            data_dict=user_facts,
+            advice_text="\n".join(engine.advice_list)
+        )
     else:
         st.write("✅ Your budgeting looks healthy. Keep it up!")
+
+st.markdown("---")
+with st.expander("📜 View Past Advice"):
+        past_advice = get_user_advice_history(st.session_state.user_id)
+        
+        if not past_advice:
+            st.info("No past advice found.")
+        else:
+            for entry in past_advice:
+                st.markdown(f"**Date:** {entry['created_at']}")
+                st.text(f"Savings: {entry['savings_percent']}%, Debt: {entry['debt_percent']}%, Wants: {entry['wants_percent']}%")
+                st.write(entry['advice_text'])
+                st.markdown("---")
+
+
+
+
+
 
