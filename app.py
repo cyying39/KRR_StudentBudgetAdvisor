@@ -130,9 +130,10 @@ class BudgetAdvisor(KnowledgeEngine):
     def low_emergency_fund(self):
         self._add_advice("📌 Build an emergency fund for unexpected expenses.")
 
-    @Rule(UserData(goal_exists=True, savings=P(lambda x: x < 500), goal_amount=1000))
-    def low_savings_for_goal(self):
-        self._add_advice("📌 Create a monthly savings plan to reach your goal.")
+    @Rule(UserData(goal_exists=True, savings=MATCH.s, goal_amount=MATCH.g))
+    def low_savings_for_goal(self, s, g):
+        if s < g:
+            self._add_advice("📌 Create a monthly savings plan to reach your goal.")
 
     @Rule(UserData(wants_percent=P(lambda x: x > 30)))
     def high_wants_spending(self):
@@ -183,17 +184,35 @@ st.sidebar.button("🚪 Logout", on_click=lambda: st.session_state.clear())
 
 
 with st.form("budget_form"):
-    savings_percent = st.slider("Savings (% of income)", 0, 100, 10)
-    debt_percent = st.slider("Debt Repayment (% of income)", 0, 100, 10)
-    subscription_percent = st.slider("Subscription (% of income)", 0, 100, 5)
-    expenses_tracking = st.checkbox("Are you currently tracking your daily expenses?")
-    emergency_fund = st.number_input("Emergency Fund (RM)", 0)
-    wants_percent = st.slider("Spending on Wants (%)", 0, 100, 30)
-    goal_exists = st.checkbox("Do you have a financial goal (e.g. buy laptop)?")
-    savings = st.number_input("Current Savings (RM)", 0)
-    goal_amount = st.number_input("Goal Amount (RM)", 0)
+    st.markdown("### 📊 Financial Ratios")
+    savings_percent = st.slider("Savings (% of income)", 0, 100, 10,
+                                help="How much of your monthly income do you save?")
+    debt_percent = st.slider("Debt Repayment (% of income)", 0, 100, 10,
+                              help="How much of your income goes to repaying loans or debt?")
+    subscription_percent = st.slider("Subscription (% of income)", 0, 100, 5,
+                                     help="Monthly subscription fees like Spotify, Netflix, etc.")
+    wants_percent = st.slider("Spending on Wants ((% of income)", 0, 100, 30,
+                              help="E.g. food delivery, gadgets, fashion (non-essentials)")
+
+    st.markdown("### 🧾 Financial Habits & Reserves")
+    expenses_tracking = st.checkbox("Do you track your daily expenses?",
+                                    help="Do you use apps or notebooks to record daily spending?")
+    emergency_fund = st.number_input("Emergency Fund (RM)", 0,
+                                     help="Cash you can use in case of unexpected situations.")
+
+    st.markdown("### 🎯 Financial Goal")
+    goal_exists = st.checkbox("Do you have a financial goal? (e.g. buy a laptop)", value=False)
+    savings = st.number_input("Current Savings for Goal (RM)", 0,
+                              help="How much you've saved towards your goal so far.")
+    goal_amount = st.number_input("Goal Target Amount (RM)", 0,
+                                  help="Total amount you need for the goal.")
+
+    # Optional warning if goal is unchecked but inputs are filled
+    if not goal_exists and (savings > 0 or goal_amount > 0):
+        st.warning("You've entered goal details, but did not check the financial goal box.")
 
     submitted = st.form_submit_button("Get Advice")
+
 
 if submitted:
     engine = BudgetAdvisor()
