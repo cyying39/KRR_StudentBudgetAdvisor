@@ -2,22 +2,63 @@ import streamlit as st
 from experta import *
 from typing import List
 import hashlib
-import mysql.connector
+import sqlite3
+import os
+
+
+# Database setup for SQLite (works on Streamlit Cloud)
+def init_database():
+    """Initialize SQLite database and create tables if they don't exist"""
+    conn = sqlite3.connect('budget_app.db')
+    cursor = conn.cursor()
+
+    # Create users table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create advice_log table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS advice_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            savings_percent REAL,
+            debt_percent REAL,
+            subscription_percent REAL,
+            expenses_tracking BOOLEAN,
+            emergency_fund REAL,
+            wants_percent REAL,
+            goal_exists BOOLEAN,
+            savings REAL,
+            goal_amount REAL,
+            advice_text TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+
 
 def get_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",          # replace if different
-        password="",  # change to your actual MySQL root password
-        database="budget_app"
-    )
+    """Get SQLite database connection"""
+    return sqlite3.connect('budget_app.db')
+
+
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
 
 def check_credentials(username, password):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, password FROM users WHERE username = %s", (username,))
+    cursor.execute("SELECT user_id, password FROM users WHERE username = ?", (username,))
     result = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -28,16 +69,17 @@ def check_credentials(username, password):
             return user_id
     return None
 
+
 def create_user(username, password):
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", 
+        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)",
                        (username, hash_password(password)))
         conn.commit()
         return True
-    except mysql.connector.errors.IntegrityError:
+    except sqlite3.IntegrityError:
         return False  # Username already exists
     finally:
         cursor.close()
@@ -48,15 +90,13 @@ def insert_advice_to_db(user_id, data_dict, advice_text):
     conn = get_connection()
     cursor = conn.cursor()
 
-    query = """
+    cursor.execute("""
         INSERT INTO advice_log (
             user_id, savings_percent, debt_percent, subscription_percent, expenses_tracking,
             emergency_fund, wants_percent, goal_exists, savings, goal_amount, advice_text
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """
-
-    values = (
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
         user_id,
         data_dict['savings_percent'],
         data_dict['debt_percent'],
@@ -68,35 +108,42 @@ def insert_advice_to_db(user_id, data_dict, advice_text):
         data_dict['savings'],
         data_dict['goal_amount'],
         advice_text
-    )
+    ))
 
-    cursor.execute(query, values)
     conn.commit()
     cursor.close()
     conn.close()
 
+
 def get_user_advice_history(user_id):
     conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
 
     cursor.execute("""
         SELECT created_at, savings_percent, debt_percent, wants_percent, advice_text
         FROM advice_log
-        WHERE user_id = %s
+        WHERE user_id = ?
         ORDER BY created_at DESC
         LIMIT 10
     """, (user_id,))
 
-    results = cursor.fetchall()
+    # Convert to list of dictionaries
+    columns = ['created_at', 'savings_percent', 'debt_percent', 'wants_percent', 'advice_text']
+    results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     cursor.close()
     conn.close()
     return results
 
 
+# Initialize database on app start
+init_database()
 
-# Define Fact and Engine
+
+# Define Fact and Engine (same as before)
 class UserData(Fact):
     pass
+
 
 class BudgetAdvisor(KnowledgeEngine):
     def __init__(self):
@@ -139,9 +186,8 @@ class BudgetAdvisor(KnowledgeEngine):
     def high_wants_spending(self):
         self._add_advice("⚠️ Too much spending on non-essentials.")
 
-    
 
-
+# Rest of your Streamlit UI code remains the same...
 if 'user_id' not in st.session_state:
     st.header("🔐 Login")
     login_username = st.text_input("Username")
@@ -176,19 +222,16 @@ if 'user_id' not in st.session_state:
 
     st.stop()
 
-
-
 # Streamlit Interface
 st.title("💰 Student Budget Advisor")
 st.sidebar.button("🚪 Logout", on_click=lambda: st.session_state.clear())
-
 
 with st.form("budget_form"):
     st.markdown("### 📊 Financial Ratios")
     savings_percent = st.slider("Savings (% of income)", 0, 100, 10,
                                 help="How much of your monthly income do you save?")
     debt_percent = st.slider("Debt Repayment (% of income)", 0, 100, 10,
-                              help="How much of your income goes to repaying loans or debt?")
+                             help="How much of your income goes to repaying loans or debt?")
     subscription_percent = st.slider("Subscription (% of income)", 0, 100, 5,
                                      help="Monthly subscription fees like Spotify, Netflix, etc.")
     wants_percent = st.slider("Spending on Wants ((% of income)", 0, 100, 30,
@@ -207,18 +250,15 @@ with st.form("budget_form"):
     goal_amount = st.number_input("Goal Target Amount (RM)", 0,
                                   help="Total amount you need for the goal.")
 
-    # Optional warning if goal is unchecked but inputs are filled
     if not goal_exists and (savings > 0 or goal_amount > 0):
         st.warning("You've entered goal details, but did not check the financial goal box.")
 
     submitted = st.form_submit_button("Get Advice")
 
-
 if submitted:
     engine = BudgetAdvisor()
     engine.reset()
-    
-    # Declare user input facts
+
     user_facts = {
         'savings_percent': savings_percent,
         'debt_percent': debt_percent,
@@ -234,12 +274,10 @@ if submitted:
     engine.declare(UserData(**user_facts))
     engine.run()
 
-    # Display advice
     st.subheader("📋 Budgeting Advice")
     if engine.advice_list:
         for advice in engine.advice_list:
             st.write(advice)
-        # Save to DB
         insert_advice_to_db(
             user_id=st.session_state.user_id,
             data_dict=user_facts,
@@ -250,19 +288,14 @@ if submitted:
 
 st.markdown("---")
 with st.expander("📜 View Past Advice"):
-        past_advice = get_user_advice_history(st.session_state.user_id)
-        
-        if not past_advice:
-            st.info("No past advice found.")
-        else:
-            for entry in past_advice:
-                st.markdown(f"**Date:** {entry['created_at']}")
-                st.text(f"Savings: {entry['savings_percent']}%, Debt: {entry['debt_percent']}%, Wants: {entry['wants_percent']}%")
-                st.write(entry['advice_text'])
-                st.markdown("---")
+    past_advice = get_user_advice_history(st.session_state.user_id)
 
-
-
-
-
-
+    if not past_advice:
+        st.info("No past advice found.")
+    else:
+        for entry in past_advice:
+            st.markdown(f"**Date:** {entry['created_at']}")
+            st.text(
+                f"Savings: {entry['savings_percent']}%, Debt: {entry['debt_percent']}%, Wants: {entry['wants_percent']}%")
+            st.write(entry['advice_text'])
+            st.markdown("---")
